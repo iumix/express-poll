@@ -10,7 +10,7 @@
 // 0x8008 = Octopus
 // 0x0003 = Suica/ICOCA/PASMO (Japan transit cards)
 
-uint8_t sensf_req_8008[5] = {
+uint8_t sensf_req[5] = {
     0x00,       /* CMD = Polling */
     0x80, 0x08, /* Octopus System Code Poll */
     // 0x00, 0x03, /* JP Transit Code Poll */
@@ -65,14 +65,14 @@ int main(void) {
   clear_screen();
 
   printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
-  printf("Polling 0x%04x\n\n", sensf_req_8008[1] << 8 | sensf_req_8008[2]);
+  printf("Polling 0x%04x\n\n", sensf_req[1] << 8 | sensf_req[2]);
 
   const nfc_modulation felica212 = (nfc_modulation){NMT_FELICA, NBR_212};
   nfc_target nt;
 
   while (!stop) {
     int sel = nfc_initiator_select_passive_target(
-        dev, felica212, sensf_req_8008, sizeof(sensf_req_8008), &nt);
+        dev, felica212, sensf_req, sizeof(sensf_req), &nt);
 
     if (sel <= 0) {
       usleep(100000);
@@ -83,7 +83,7 @@ int main(void) {
     clear_screen();
     printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
     printf("Apple Pay Octopus (0x%04x) detected\n\n",
-           sensf_req_8008[1] << 8 | sensf_req_8008[2]);
+           sensf_req[1] << 8 | sensf_req[2]);
     printf("Detected Felica\n");
 
     uint8_t idm[8];
@@ -120,7 +120,7 @@ int main(void) {
     printf("--------------------------------\n\n");
 
     /* After a scan completes, show the waiting header again */
-    printf("Polling 0x%04x\n\n", sensf_req_8008[1] << 8 | sensf_req_8008[2]);
+    printf("Polling 0x%04x\n\n", sensf_req[1] << 8 | sensf_req[2]);
   }
 
   nfc_close(dev);
