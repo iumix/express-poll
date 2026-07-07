@@ -12,7 +12,8 @@
 
 uint8_t sensf_req_8008[5] = {
     0x00,       /* CMD = Polling */
-    0x80, 0x08, /* System Code Poll */
+    0x80, 0x08, /* Octopus System Code Poll */
+    // 0x00, 0x03, /* JP Transit Code Poll */
     0x01,       /* Request Code: system code info */
     0x00        /* Time Slot: 1 slot */
 };
