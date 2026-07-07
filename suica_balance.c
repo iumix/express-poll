@@ -1,8 +1,3 @@
-/*
- * suica_balance.c  –  loop-read Suica balance
- * gcc suica_balance.c -lnfc -o suica_balance
- */
-
 #include <nfc/nfc.h>
 #include <signal.h>
 #include <stdint.h>
@@ -11,8 +6,25 @@
 #include <unistd.h>
 
 #define MAX_FRAME 264
+
+static const uint8_t sensf_req_0003[5] = {
+    0x00,       /* CMD = Polling */
+    0x00, 0x03, /* System Code 0x0003 (Japan transit IC common area) */
+    0x01,       /* Request Code: system code info */
+    0x00        /* Time Slot: 1 slot */
+};
+
 static volatile sig_atomic_t stop = 0;
-static void on_sigint(int sig) { stop = 1; }
+
+static void on_sigint(int sig) {
+  (void)sig;
+  stop = 1;
+}
+
+static void clear_screen(void) {
+  fputs("\033[2J\033[H", stdout);
+  fflush(stdout);
+}
 
 static void hexdump(const uint8_t *d, size_t n) {
   for (size_t i = 0; i < n; ++i)
@@ -21,75 +33,163 @@ static void hexdump(const uint8_t *d, size_t n) {
     puts("");
 }
 
+static uint16_t suica_date_year(const uint8_t *block_data) {
+  uint16_t raw_date = ((uint16_t)block_data[4] << 8) | block_data[5];
+  return (uint16_t)(2000 + ((raw_date >> 9) & 0x7f));
+}
+
+static uint8_t suica_date_month(const uint8_t *block_data) {
+  uint16_t raw_date = ((uint16_t)block_data[4] << 8) | block_data[5];
+  return (uint8_t)((raw_date >> 5) & 0x0f);
+}
+
+static uint8_t suica_date_day(const uint8_t *block_data) {
+  uint16_t raw_date = ((uint16_t)block_data[4] << 8) | block_data[5];
+  return (uint8_t)(raw_date & 0x1f);
+}
+
 int main(void) {
   signal(SIGINT, on_sigint);
 
   nfc_context *ctx = NULL;
   nfc_init(&ctx);
   if (!ctx) {
-    perror("nfc_init");
+    fprintf(stderr, "Unable to init libnfc\n");
     return 1;
   }
+
   nfc_device *dev = nfc_open(ctx, NULL);
   if (!dev) {
-    fputs("No NFC reader\n", stderr);
+    fprintf(stderr, "Unable to open NFC device\n");
+    nfc_exit(ctx);
     return 1;
   }
 
   if (nfc_initiator_init(dev) < 0) {
-    nfc_perror(dev, "init");
+    nfc_perror(dev, "nfc_initiator_init");
+    nfc_close(dev);
+    nfc_exit(ctx);
     return 1;
   }
-  printf("Reader: %s opened\n\n", nfc_device_get_name(dev));
 
-  const nfc_modulation felica212 = {NMT_FELICA, NBR_212};
-  nfc_target nt; /* lives for the whole loop   */
+  clear_screen();
+
+  printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
+  printf("Waiting for Suica / ICOCA / PASMO compatible card (FeliCa 0x0003)...\n\n");
+
+  const nfc_modulation felica212 = (nfc_modulation){NMT_FELICA, NBR_212};
+  nfc_target nt;
 
   while (!stop) {
-    /* ---- Wait for a FeliCa card ---- */
-    if (nfc_initiator_select_passive_target(dev, felica212, NULL, 0, &nt) <=
-        0) {
-      usleep(10000); /* no card, back off 0.1 s    */
+    int sel = nfc_initiator_select_passive_target(
+        dev, felica212, sensf_req_0003, sizeof(sensf_req_0003), &nt);
+
+    if (sel <= 0) {
+      usleep(100000);
       continue;
     }
 
-    printf("Card detected. IDm: ");
-    hexdump(nt.nti.nfi.abtId, 8);
+    clear_screen();
 
-    /* ---- Build Read-Without-Encryption (svc 0x008B, block 0) ---- */
-    uint8_t cmd[] = {
-        0x10, 0x06,                      /* LEN=16, CMD=0x06           */
-        0,    0,    0,    0, 0, 0, 0, 0, /* IDm (place-holder)         */
-        0x01, 0x8B, 0x00,                /* 1 svc: 0x008B              */
-        0x01, 0x80, 0x00                 /* 1 blk: block 0             */
+    uint8_t idm[8];
+    memcpy(idm, nt.nti.nfi.abtId, sizeof(idm));
+
+    printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
+    printf("Suica / ICOCA / PASMO compatible card detected\n\n");
+    printf("Detected FeliCa system 0x0003\n");
+
+    printf("IDm (NFCID2): ");
+    hexdump(idm, sizeof(idm));
+
+    /*
+     * Read Without Encryption:
+     *   Service 0x008B = SF/card transaction history in the 0x0003 common area.
+     *   Block 0 is the newest history entry and contains the current balance.
+     */
+    uint8_t read_cmd[] = {
+        0x10, 0x06,                   /* LEN=16, CMD=0x06 (Read w/o Enc) */
+        0,    0,    0, 0, 0, 0, 0, 0, /* IDm (8 bytes) */
+        0x01,                         /* Number of services: 1 */
+        0x8b, 0x00,                   /* Service Code 0x008B (little-endian) */
+        0x01,                         /* Number of blocks: 1 */
+        0x80, 0x00                    /* Block List: 0x8000 (2-byte format) */
     };
-    memcpy(cmd + 2, nt.nti.nfi.abtId, 8);
+    memcpy(read_cmd + 2, idm, sizeof(idm));
 
-    uint8_t rsp[MAX_FRAME];
-    int rlen = nfc_initiator_transceive_bytes(dev, cmd, sizeof cmd, rsp,
-                                              sizeof rsp, 0);
+    uint8_t read_rsp[MAX_FRAME];
+    int read_len = nfc_initiator_transceive_bytes(
+        dev, read_cmd, sizeof(read_cmd), read_rsp, sizeof(read_rsp), 0);
 
-    printf("Raw response (%d bytes): \n", rlen);
-    hexdump(rsp, rlen);
-
-    if (rlen >= 29 && rsp[1] == 0x07 && rsp[10] == 0 && rsp[11] == 0) {
-      const uint8_t *blk = rsp + 13;
-      uint16_t bal = blk[11] | (blk[12] << 8); /* bytes 11-12 */
-      printf("Balance: %u JPY\n", bal);
-    } else {
-      puts("Read error.");
+    printf("\nRead Without Encryption response (%d bytes):\n", read_len);
+    if (read_len <= 0) {
+      printf("Read Without Encryption failed\n");
+      goto release_and_wait;
     }
 
-    /* ---- Stay here until card leaves the field ---- */
-    while (!stop && nfc_initiator_target_is_present(dev, &nt) == 0)
-      usleep(200000); /* poll every 0.2 s           */
+    hexdump(read_rsp, read_len);
 
-    puts("Card removed.\n");
+    if (read_len >= 29 && read_rsp[1] == 0x07) {
+      uint8_t status1 = read_rsp[10];
+      uint8_t status2 = read_rsp[11];
+      uint8_t num_blocks = read_rsp[12];
+
+      printf("Status: %02x %02x, Blocks: %d\n", status1, status2, num_blocks);
+
+      if (status1 == 0x00 && status2 == 0x00 && num_blocks > 0) {
+        const uint8_t *block_data = read_rsp + 13;
+        uint16_t balance = (uint16_t)block_data[11] |
+                           ((uint16_t)block_data[12] << 8);
+
+        printf("\nBlock data (16 bytes):\n");
+        hexdump(block_data, 16);
+
+        printf("\n=== Balance Information ===\n");
+        printf("Balance: %u JPY\n", balance);
+
+        if (block_data[4] || block_data[5]) {
+          printf("Latest history date: %04u-%02u-%02u\n",
+                 suica_date_year(block_data), suica_date_month(block_data),
+                 suica_date_day(block_data));
+        }
+        printf("\a");
+      } else {
+        printf("Read error: Status indicates failure\n");
+      }
+    } else {
+      printf("Unexpected response format\n");
+    }
+
+  release_and_wait: {
+    uint8_t release_cmd[] = {
+        0x0A, 0x04,                  /* LEN=10, CMD=0x04 (Release) */
+        0,    0,    0, 0, 0, 0, 0, 0 /* IDm (8 bytes) */
+    };
+    memcpy(release_cmd + 2, idm, sizeof(idm));
+
+    uint8_t release_rsp[MAX_FRAME];
+    int release_len =
+        nfc_initiator_transceive_bytes(dev, release_cmd, sizeof(release_cmd),
+                                       release_rsp, sizeof(release_rsp), 0);
+
+    if (release_len > 0) {
+      printf("\nRelease response (%d bytes):\n", release_len);
+      hexdump(release_rsp, release_len);
+    } else {
+      printf("Release command failed\n");
+    }
   }
-  
+
+    printf("\nWaiting for card removal...\n");
+    while (!stop && nfc_initiator_target_is_present(dev, &nt) == 0)
+      usleep(200000);
+
+    printf("Card removed.\n");
+    printf("--------------------------------\n\n");
+    printf("Waiting for Suica / ICOCA / PASMO compatible card (FeliCa 0x0003)...\n\n");
+  }
 
   nfc_close(dev);
   nfc_exit(ctx);
-  puts("Bye!");
+  printf("Program terminated.\n");
   return 0;
 }
