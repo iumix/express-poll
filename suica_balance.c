@@ -1,11 +1,13 @@
 #include <nfc/nfc.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #define MAX_FRAME 264
+static const bool VERBOSE = false;
 
 static const uint8_t sensf_req_0003[5] = {
     0x00,       /* CMD = Polling */
@@ -24,6 +26,10 @@ static void on_sigint(int sig) {
 static void clear_screen(void) {
   fputs("\033[2J\033[H", stdout);
   fflush(stdout);
+}
+
+static void print_ready(void) {
+  printf("Waiting for Suica / ICOCA / PASMO compatible card (FeliCa 0x0003)...\n\n");
 }
 
 static void hexdump(const uint8_t *d, size_t n) {
@@ -73,9 +79,9 @@ int main(void) {
   }
 
   clear_screen();
-
-  printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
-  printf("Waiting for Suica / ICOCA / PASMO compatible card (FeliCa 0x0003)...\n\n");
+  if (VERBOSE)
+    printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
+  print_ready();
 
   const nfc_modulation felica212 = (nfc_modulation){NMT_FELICA, NBR_212};
   nfc_target nt;
@@ -94,12 +100,14 @@ int main(void) {
     uint8_t idm[8];
     memcpy(idm, nt.nti.nfi.abtId, sizeof(idm));
 
-    printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
-    printf("Suica / ICOCA / PASMO compatible card detected\n\n");
-    printf("Detected FeliCa system 0x0003\n");
+    if (VERBOSE) {
+      printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
+      printf("Suica / ICOCA / PASMO compatible card detected\n\n");
+      printf("Detected FeliCa system 0x0003\n");
 
-    printf("IDm (NFCID2): ");
-    hexdump(idm, sizeof(idm));
+      printf("IDm (NFCID2): ");
+      hexdump(idm, sizeof(idm));
+    }
 
     /*
      * Read Without Encryption:
@@ -120,38 +128,45 @@ int main(void) {
     int read_len = nfc_initiator_transceive_bytes(
         dev, read_cmd, sizeof(read_cmd), read_rsp, sizeof(read_rsp), 0);
 
-    printf("\nRead Without Encryption response (%d bytes):\n", read_len);
+    if (VERBOSE)
+      printf("\nRead Without Encryption response (%d bytes):\n", read_len);
     if (read_len <= 0) {
       printf("Read Without Encryption failed\n");
       goto release_and_wait;
     }
 
-    hexdump(read_rsp, read_len);
+    if (VERBOSE)
+      hexdump(read_rsp, read_len);
 
     if (read_len >= 29 && read_rsp[1] == 0x07) {
       uint8_t status1 = read_rsp[10];
       uint8_t status2 = read_rsp[11];
       uint8_t num_blocks = read_rsp[12];
 
-      printf("Status: %02x %02x, Blocks: %d\n", status1, status2, num_blocks);
+      if (VERBOSE)
+        printf("Status: %02x %02x, Blocks: %d\n", status1, status2,
+               num_blocks);
 
       if (status1 == 0x00 && status2 == 0x00 && num_blocks > 0) {
         const uint8_t *block_data = read_rsp + 13;
         uint16_t balance = (uint16_t)block_data[11] |
                            ((uint16_t)block_data[12] << 8);
 
-        printf("\nBlock data (16 bytes):\n");
-        hexdump(block_data, 16);
+        if (VERBOSE) {
+          printf("\nBlock data (16 bytes):\n");
+          hexdump(block_data, 16);
+          printf("\n=== Balance Information ===\n");
+        }
 
-        printf("\n=== Balance Information ===\n");
         printf("Balance: %u JPY\n", balance);
 
-        if (block_data[4] || block_data[5]) {
+        if (VERBOSE && (block_data[4] || block_data[5])) {
           printf("Latest history date: %04u-%02u-%02u\n",
                  suica_date_year(block_data), suica_date_month(block_data),
                  suica_date_day(block_data));
         }
-        printf("\a");
+        if (VERBOSE)
+          printf("\a");
       } else {
         printf("Read error: Status indicates failure\n");
       }
@@ -171,25 +186,29 @@ int main(void) {
         nfc_initiator_transceive_bytes(dev, release_cmd, sizeof(release_cmd),
                                        release_rsp, sizeof(release_rsp), 0);
 
-    if (release_len > 0) {
+    if (VERBOSE && release_len > 0) {
       printf("\nRelease response (%d bytes):\n", release_len);
       hexdump(release_rsp, release_len);
-    } else {
+    } else if (VERBOSE) {
       printf("Release command failed\n");
     }
   }
 
-    printf("\nWaiting for card removal...\n");
+    if (VERBOSE)
+      printf("\nWaiting for card removal...\n");
     while (!stop && nfc_initiator_target_is_present(dev, &nt) == 0)
       usleep(200000);
 
-    printf("Card removed.\n");
-    printf("--------------------------------\n\n");
-    printf("Waiting for Suica / ICOCA / PASMO compatible card (FeliCa 0x0003)...\n\n");
+    if (VERBOSE) {
+      printf("Card removed.\n");
+      printf("--------------------------------\n\n");
+    }
+    print_ready();
   }
 
   nfc_close(dev);
   nfc_exit(ctx);
-  printf("Program terminated.\n");
+  if (VERBOSE)
+    printf("Program terminated.\n");
   return 0;
 }

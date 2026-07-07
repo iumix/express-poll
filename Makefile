@@ -9,7 +9,6 @@ BIN_DIR = bin
 all: $(BINS)
 
 $(BIN_DIR)/%: %.c
-	rm -rf $(BIN_DIR)
 	@mkdir -p $(@D)
 	$(CC) $< -o $@ $(LDLIBS)
 

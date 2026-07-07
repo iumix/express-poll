@@ -1,11 +1,13 @@
 #include <nfc/nfc.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #define MAX_FRAME 264
+static const bool VERBOSE = false;
 
 uint8_t sensf_req_8008[5] = {
     0x00,       /* CMD = Polling */
@@ -25,6 +27,10 @@ static void clear_screen(void) {
   /* ANSI: clear screen + home cursor */
   fputs("\033[2J\033[H", stdout);
   fflush(stdout);
+}
+
+static void print_ready(void) {
+  printf("Waiting for Apple Pay Octopus Card (Express)…\n\n");
 }
 
 static void hexdump(const uint8_t *d, size_t n) {
@@ -60,9 +66,9 @@ int main(void) {
 
   /* Clear once at startup */
   clear_screen();
-
-  printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
-  printf("Waiting for Apple Pay Octopus Card (Express)…\n\n");
+  if (VERBOSE)
+    printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
+  print_ready();
 
   const nfc_modulation felica212 = (nfc_modulation){NMT_FELICA, NBR_212};
   nfc_target nt;
@@ -81,15 +87,19 @@ int main(void) {
     /* Clear before showing data for each (subsequent) scan */
     clear_screen();
 
-    printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
-    printf("Apple Pay Octopus Card (Express) detected\n\n");
-    printf("Detected Felica\n");
+    if (VERBOSE) {
+      printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
+      printf("Apple Pay Octopus Card (Express) detected\n\n");
+      printf("Detected Felica\n");
+    }
 
     uint8_t idm[8];
     memcpy(idm, nt.nti.nfi.abtId, 8);
 
-    printf("IDm (NFCID2): ");
-    hexdump(idm, 8);
+    if (VERBOSE) {
+      printf("IDm (NFCID2): ");
+      hexdump(idm, 8);
+    }
 
     // Read Balance
     uint8_t read_cmd[] = {
@@ -106,25 +116,31 @@ int main(void) {
     int read_len = nfc_initiator_transceive_bytes(
         dev, read_cmd, sizeof(read_cmd), read_rsp, sizeof(read_rsp), 0);
 
-    printf("\nRead Without Encryption response (%d bytes):\n", read_len);
+    if (VERBOSE)
+      printf("\nRead Without Encryption response (%d bytes):\n", read_len);
     if (read_len <= 0) {
       printf("Read Without Encryption failed\n");
       goto release_and_wait;
     }
 
-    hexdump(read_rsp, read_len);
+    if (VERBOSE)
+      hexdump(read_rsp, read_len);
 
     if (read_len >= 29 && read_rsp[1] == 0x07) {
       uint8_t status1 = read_rsp[10];
       uint8_t status2 = read_rsp[11];
       uint8_t num_blocks = read_rsp[12];
 
-      printf("Status: %02x %02x, Blocks: %d\n", status1, status2, num_blocks);
+      if (VERBOSE)
+        printf("Status: %02x %02x, Blocks: %d\n", status1, status2,
+               num_blocks);
 
       if (status1 == 0x00 && status2 == 0x00 && num_blocks > 0) {
         const uint8_t *block_data = read_rsp + 13;
-        printf("\nBlock data (16 bytes):\n");
-        hexdump(block_data, 16);
+        if (VERBOSE) {
+          printf("\nBlock data (16 bytes):\n");
+          hexdump(block_data, 16);
+        }
 
         int32_t balance = 0;
         for (int i = 0; i < 4; i++) {
@@ -132,12 +148,13 @@ int main(void) {
           balance |= block_data[i];
         }
 
-        int32_t balance_350 = balance - 350;
         int32_t balance_500 = balance - 500;
 
-        printf("\n=== Balance Information ===\n");
-        printf("Raw value: %d (0x%08x)\n", balance, (unsigned int)balance);
-        printf("\a");
+        if (VERBOSE) {
+          printf("\n=== Balance Information ===\n");
+          printf("Raw value: %d (0x%08x)\n", balance, (unsigned int)balance);
+          printf("\a");
+        }
 
         // Before 2017-10-01, Octopus used to have a HK$350 deposit
         // printf("Balance (offset 350): ");
@@ -170,27 +187,31 @@ int main(void) {
         nfc_initiator_transceive_bytes(dev, release_cmd, sizeof(release_cmd),
                                        release_rsp, sizeof(release_rsp), 0);
 
-    if (release_len > 0) {
+    if (VERBOSE && release_len > 0) {
       printf("\nRelease response (%d bytes):\n", release_len);
       hexdump(release_rsp, release_len);
-    } else {
+    } else if (VERBOSE) {
       printf("Release command failed\n");
     }
   }
 
-    printf("\nWaiting for card removal...\n");
+    if (VERBOSE)
+      printf("\nWaiting for card removal...\n");
     while (!stop && nfc_initiator_target_is_present(dev, &nt) == 0)
       usleep(200000);
 
-    printf("Card removed.\n");
-    printf("--------------------------------\n\n");
+    if (VERBOSE) {
+      printf("Card removed.\n");
+      printf("--------------------------------\n\n");
+    }
 
     /* Re-print header after removal so the next loop (waiting) has context */
-    printf("Waiting for Apple Pay Octopus Card (Express)…\n\n");
+    print_ready();
   }
 
   nfc_close(dev);
   nfc_exit(ctx);
-  printf("Program terminated.\n");
+  if (VERBOSE)
+    printf("Program terminated.\n");
   return 0;
 }
