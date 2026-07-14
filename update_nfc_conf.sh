@@ -5,7 +5,7 @@ set -euo pipefail
 readonly NFC_CONFIG="/usr/local/etc/nfc/libnfc.conf"
 
 usage() {
-  echo "Usage: sudo $0 [/dev/tty.*]"
+  echo "Usage: $0 [/dev/tty.*]"
 }
 
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
@@ -14,9 +14,8 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
 fi
 
 if (( EUID != 0 )); then
-  echo "Error: this script must be run with sudo." >&2
-  usage >&2
-  exit 1
+  echo "Root privileges are required; requesting sudo..."
+  exec sudo -- "$0" "$@"
 fi
 
 if (( $# > 1 )); then
