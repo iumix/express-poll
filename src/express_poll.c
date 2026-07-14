@@ -2,18 +2,28 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define MAX_FRAME 264
+#define ARRAY_LEN(array) (sizeof(array) / sizeof((array)[0]))
 
-// 0x8008 = Octopus
-// 0x0003 = Suica/ICOCA/PASMO (Japan transit cards)
+typedef struct {
+  uint16_t code;
+  const char *name;
+} felica_system;
+
+/* Add new system codes here; the picker and status output use this table. */
+static const felica_system felica_systems[] = {
+    {0x8008, "Octopus"},
+    {0x0003, "Suica / ICOCA / PASMO"},
+};
 
 uint8_t sensf_req[5] = {
     0x00,       /* CMD = Polling */
-    0x80, 0x08, /* Octopus System Code Poll */
-    // 0x00, 0x03, /* JP Transit Code Poll */
+    0x00, 0x00, /* System code, populated after the fzf selection */
     0x01,       /* Request Code: system code info */
     0x00        /* Time Slot: 1 slot */
 };
@@ -37,8 +47,108 @@ static void hexdump(const uint8_t *d, size_t n) {
     puts("");
 }
 
+static int choose_system(const felica_system **selected_system) {
+  char choices_path[] = "/tmp/express_poll_systems.XXXXXX";
+  int choices_fd = mkstemp(choices_path);
+  if (choices_fd < 0) {
+    perror("Unable to create system code list");
+    return -1;
+  }
+
+  FILE *choices = fdopen(choices_fd, "w");
+  if (!choices) {
+    perror("Unable to write system code list");
+    close(choices_fd);
+    unlink(choices_path);
+    return -1;
+  }
+
+  int write_failed = 0;
+  for (size_t i = 0; i < ARRAY_LEN(felica_systems); ++i) {
+    if (fprintf(choices, "0x%04x  %s\n", felica_systems[i].code,
+                felica_systems[i].name) < 0) {
+      write_failed = 1;
+      break;
+    }
+  }
+  if (fclose(choices) != 0)
+    write_failed = 1;
+  if (write_failed) {
+    fprintf(stderr, "Unable to write system code list.\n");
+    unlink(choices_path);
+    return -1;
+  }
+
+  char command[1024];
+  int command_length = snprintf(
+      command, sizeof(command),
+      "fzf_command=$(command -v fzf 2>/dev/null || true); "
+      "if [ -z \"$fzf_command\" ]; then "
+      "if [ -x /opt/homebrew/bin/fzf ]; then "
+      "fzf_command=/opt/homebrew/bin/fzf; "
+      "elif [ -x /usr/local/bin/fzf ]; then "
+      "fzf_command=/usr/local/bin/fzf; "
+      "else echo 'Error: fzf is required to select a system code.' >&2; "
+      "exit 127; fi; fi; "
+      "\"$fzf_command\" --height='~40%%' --reverse --no-multi "
+      "--prompt='Select FeliCa system code: ' < '%s'",
+      choices_path);
+  if (command_length < 0 || (size_t)command_length >= sizeof(command)) {
+    fprintf(stderr, "Unable to construct fzf command.\n");
+    unlink(choices_path);
+    return -1;
+  }
+
+  FILE *fzf = popen(command, "r");
+  if (!fzf) {
+    perror("Unable to start fzf");
+    unlink(choices_path);
+    return -1;
+  }
+
+  char selection[256];
+  char *result = fgets(selection, sizeof(selection), fzf);
+  int status = pclose(fzf);
+  unlink(choices_path);
+
+  if (!result) {
+    if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 127)
+      fprintf(stderr, "System code selection cancelled.\n");
+    return -1;
+  }
+  if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    fprintf(stderr, "fzf failed while selecting a system code.\n");
+    return -1;
+  }
+
+  unsigned int selected_code;
+  if (sscanf(selection, "0x%x", &selected_code) != 1 ||
+      selected_code > UINT16_MAX) {
+    fprintf(stderr, "Invalid system code selected: %s", selection);
+    return -1;
+  }
+
+  for (size_t i = 0; i < ARRAY_LEN(felica_systems); ++i) {
+    if (felica_systems[i].code == selected_code) {
+      *selected_system = &felica_systems[i];
+      return 0;
+    }
+  }
+
+  fprintf(stderr, "Unknown system code selected: 0x%04x\n", selected_code);
+  return -1;
+}
+
 int main(void) {
   signal(SIGINT, on_sigint);
+
+  const felica_system *system;
+  if (choose_system(&system) < 0)
+    return 1;
+
+  uint16_t system_code = system->code;
+  sensf_req[1] = (uint8_t)(system_code >> 8);
+  sensf_req[2] = (uint8_t)system_code;
 
   nfc_context *ctx = NULL;
   nfc_init(&ctx);
@@ -82,8 +192,7 @@ int main(void) {
     /* Clear before showing data for this scan */
     clear_screen();
     printf("NFC reader: %s opened\n", nfc_device_get_name(dev));
-    printf("Apple Pay Octopus (0x%04x) detected\n\n",
-           sensf_req[1] << 8 | sensf_req[2]);
+    printf("%s (0x%04x) detected\n\n", system->name, system_code);
     printf("Detected Felica\n");
 
     uint8_t idm[8];
