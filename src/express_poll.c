@@ -17,8 +17,26 @@ typedef struct {
 
 /* Add new system codes here; the picker and status output use this table. */
 static const felica_system felica_systems[] = {
-    {0x8008, "Octopus"},
     {0x0003, "Suica / ICOCA / PASMO"},
+    {0x8008, "Octopus"},
+    {0xFE00, "FeliCa Common Area"},
+    {0x811D, "Rakuten Edy"},
+    {0x12FC, "NFC Forum Type 3 Tag / NDEF"},
+    {0x88B4, "FeliCa Lite / Lite-S"},
+    {0x957A, "FeliCa Secure ID"},
+    {0xFEE1, "Sony NFC Dynamic Tag / FeliCa Plug"},
+    {0x8620, "Blackboard Campus Card"},
+    {0x80DE, "IruCa"},
+    {0x83EE, "ayuca"},
+    {0x8592, "PASPY"},
+    {0x865E, "SAPICA"},
+    {0x8B5D, "Ryuto"},
+    {0x8FC1, "OKICA"},
+    {0x93EC, "N+ Card"},
+    {0x90B7, "Kartu Multi Trip"},
+    {0x0102, "Legacy EZ-Link"},
+    {0x0000, "Sony SDK Sample"},
+    {0xFFFF, "Any System"},
 };
 
 uint8_t sensf_req[5] = {
