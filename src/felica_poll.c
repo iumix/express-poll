@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include "common/platform.h"
 
 // Define a raw structure to match how FeliCa data is laid out
 typedef struct {
@@ -12,6 +12,7 @@ typedef struct {
 } felica_raw_t;
 
 int main(void) {
+  transit_console_init();
   nfc_device *pnd = NULL;
   nfc_context *context;
   nfc_target nt;
@@ -22,7 +23,7 @@ int main(void) {
     return EXIT_FAILURE;
   }
 
-  pnd = nfc_open(context, NULL);
+  pnd = transit_open(context);
   if (pnd == NULL) {
     fprintf(stderr, "Unable to open NFC device\n");
     nfc_exit(context);
@@ -58,11 +59,11 @@ int main(void) {
 
       printf("Waiting for card removal...\n");
       while (nfc_initiator_target_is_present(pnd, NULL) == 0) {
-        usleep(500000);
+        transit_sleep_ms(500);
       }
       printf("Card removed.\n\n");
     } else {
-      usleep(200000);
+      transit_sleep_ms(200);
     }
   }
 

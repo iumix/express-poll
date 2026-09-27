@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include "common/platform.h"
 
 #define MAX_FRAME 264
 #define ARRAY_LEN(array) (sizeof(array) / sizeof((array)[0]))
@@ -164,7 +164,7 @@ static int wait_for_card_removal(nfc_device *dev, nfc_modulation modulation,
                                  const uint8_t idm[FELICA_IDM_LEN]) {
   while (!stop) {
     if (nfc_initiator_target_is_present(dev, NULL) == 0) {
-      usleep(200000);
+      transit_sleep_ms(200);
       continue;
     }
 
@@ -183,7 +183,7 @@ static int wait_for_card_removal(nfc_device *dev, nfc_modulation modulation,
       }
       if (selected == 0) {
         ++misses;
-        usleep(200000);
+        transit_sleep_ms(200);
         continue;
       }
 
@@ -202,6 +202,7 @@ static int wait_for_card_removal(nfc_device *dev, nfc_modulation modulation,
 }
 
 int main(void) {
+  transit_console_init();
   signal(SIGINT, on_sigint);
 
   nfc_context *ctx = NULL;
@@ -211,7 +212,7 @@ int main(void) {
     return EXIT_FAILURE;
   }
 
-  nfc_device *dev = nfc_open(ctx, NULL);
+  nfc_device *dev = transit_open(ctx);
   if (!dev) {
     fprintf(stderr, "Unable to open NFC device\n");
     nfc_exit(ctx);
@@ -250,7 +251,7 @@ int main(void) {
       break;
     }
     if (selected == 0) {
-      usleep(100000);
+      transit_sleep_ms(100);
       continue;
     }
 

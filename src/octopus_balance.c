@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
+#include "common/platform.h"
 
 #define MAX_FRAME 264
 
@@ -40,24 +40,10 @@ static void hexdump(const uint8_t *d, size_t n) {
 }
 
 int main(int argc, char *argv[]) {
+  transit_console_init();
   bool verbose = false;
-  int option;
-
-  while ((option = getopt(argc, argv, "v")) != -1) {
-    switch (option) {
-    case 'v':
-      verbose = true;
-      break;
-    default:
-      fprintf(stderr, "Usage: %s [-v]\n", argv[0]);
-      return 2;
-    }
-  }
-
-  if (optind < argc) {
-    fprintf(stderr, "Usage: %s [-v]\n", argv[0]);
+  if (transit_verbose_args(argc, argv, &verbose) < 0)
     return 2;
-  }
 
   signal(SIGINT, on_sigint);
 
@@ -68,7 +54,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  nfc_device *dev = nfc_open(ctx, NULL);
+  nfc_device *dev = transit_open(ctx);
   if (!dev) {
     fprintf(stderr, "Unable to open NFC device\n");
     nfc_exit(ctx);
@@ -98,7 +84,7 @@ int main(int argc, char *argv[]) {
         &nt);
 
     if (sel <= 0) {
-      usleep(100000);
+      transit_sleep_ms(100);
       continue;
     }
 
@@ -216,7 +202,7 @@ int main(int argc, char *argv[]) {
     if (verbose)
       printf("\nWaiting for card removal...\n");
     while (!stop && nfc_initiator_target_is_present(dev, &nt) == 0)
-      usleep(200000);
+      transit_sleep_ms(200);
 
     if (verbose) {
       printf("Card removed.\n");
