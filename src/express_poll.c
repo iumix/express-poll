@@ -4,8 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
+#include "common/platform.h"
 
 #define MAX_FRAME 264
 #define ARRAY_LEN(array) (sizeof(array) / sizeof((array)[0]))
@@ -66,6 +69,23 @@ static void hexdump(const uint8_t *d, size_t n) {
 }
 
 static int choose_system(const felica_system **selected_system) {
+#ifdef _WIN32
+  for (size_t i = 0; i < ARRAY_LEN(felica_systems); ++i)
+    printf("%2zu. 0x%04x  %s\n", i + 1, felica_systems[i].code,
+           felica_systems[i].name);
+  printf("Select FeliCa system (1-%zu): ", ARRAY_LEN(felica_systems));
+  fflush(stdout);
+  char input[80], extra;
+  unsigned int choice;
+  if (!fgets(input, sizeof(input), stdin) ||
+      sscanf(input, "%u %c", &choice, &extra) != 1 ||
+      choice < 1 || choice > ARRAY_LEN(felica_systems)) {
+    fprintf(stderr, "Invalid selection.\n");
+    return -1;
+  }
+  *selected_system = &felica_systems[choice - 1];
+  return 0;
+#else
   char choices_path[] = "/tmp/express_poll_systems.XXXXXX";
   int choices_fd = mkstemp(choices_path);
   if (choices_fd < 0) {
@@ -155,9 +175,11 @@ static int choose_system(const felica_system **selected_system) {
 
   fprintf(stderr, "Unknown system code selected: 0x%04x\n", selected_code);
   return -1;
+#endif
 }
 
 int main(void) {
+  transit_console_init();
   signal(SIGINT, on_sigint);
 
   const felica_system *system;
@@ -175,7 +197,7 @@ int main(void) {
     return 1;
   }
 
-  nfc_device *dev = nfc_open(ctx, NULL);
+  nfc_device *dev = transit_open(ctx);
   if (!dev) {
     fprintf(stderr, "Unable to open NFC device\n");
     nfc_exit(ctx);
@@ -203,7 +225,7 @@ int main(void) {
         dev, felica212, sensf_req, sizeof(sensf_req), &nt);
 
     if (sel <= 0) {
-      usleep(100000);
+      transit_sleep_ms(100);
       continue;
     }
 
@@ -241,7 +263,7 @@ int main(void) {
     // Wait for card removal
     printf("\nWaiting for card removal...\n");
     while (!stop && nfc_initiator_target_is_present(dev, &nt) == 0)
-      usleep(200000);
+      transit_sleep_ms(200);
 
     printf("Card removed.\n");
     printf("--------------------------------\n\n");
