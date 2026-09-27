@@ -20,6 +20,13 @@ if(WIN32)
   set(LIBNFC_DRIVER_PN532_UART ON CACHE BOOL "" FORCE)
   set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
   FetchContent_MakeAvailable(libnfc)
+  # Upstream's environment shim uses char *str[32] as a character buffer.
+  # GCC 14+ rejects it; replace it with the CRT implementation, which also
+  # avoids the fixed buffer size and incorrect overwrite=0 return value.
+  get_target_property(nfc_sources nfc SOURCES)
+  list(FILTER nfc_sources EXCLUDE REGEX "contrib/win32/stdlib\\.c$")
+  set_property(TARGET nfc PROPERTY SOURCES "${nfc_sources}")
+  target_sources(nfc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/common/nfc_windows_env.c")
   # MinGW already produces an import library; the upstream MSVC helper assumes
   # a different DLL output directory and is not needed by these executables.
   set_target_properties(win32lib PROPERTIES EXCLUDE_FROM_ALL TRUE)

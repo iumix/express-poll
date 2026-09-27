@@ -21,6 +21,11 @@ jobs:
         run: make clean && make
       - name: CLI checks
         run: python3 tests/test_cli.py
+      - name: Windows environment compatibility
+        if: runner.os == 'Windows'
+        run: |
+          gcc -Werror tests/windows_env_test.c src/common/nfc_windows_env.c -o build/windows_env_test.exe
+          ./build/windows_env_test.exe
       - name: Discovery checks
         if: runner.os != 'Windows'
         shell: bash
