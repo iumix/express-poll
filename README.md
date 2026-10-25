@@ -1,4 +1,4 @@
-# Transit polling
+# express-poll
 
 1. Connect the PN532 in UART/HSU mode.
 2. Build all binaries:
@@ -71,3 +71,14 @@ List the FeliCa system codes exposed by a card/phone.
    ```
 
    Run `make` again to rebuild.
+
+## Disclaimer
+
+This project is not affiliated with or endorsed by Octopus Cards Limited,
+JR East, Sony, or any other card issuer. The programs only read data that cards
+expose without encryption and never write to a card. They are provided for
+educational and personal use, at your own risk.
+
+## License
+
+[MIT](LICENSE)
